@@ -4,14 +4,14 @@ import re
 from fpdf import FPDF
 
 # --- WEB APP INTERFACE ---
-st.set_page_config(page_title="Lineup Automator", page_icon="📺")
+st.set_page_config(page_title="Lineup Automator", page_icon="📺", layout="wide")
 st.title("📺 Local Lineups Automator")
-st.write("Upload a Lineup Report (PDF) to automatically find missing CBS rows. The output PDF will only include Program Name, Day, Wks, and Call Letter.")
+st.write("Upload a Lineup Report (PDF) to automatically find missing CBS rows. The output PDF will include Program Name, Day, Wks, Tot Qhr, Telecast Time, and Call Letter.")
 
 uploaded_file = st.file_uploader("Upload Lineup Report PDF", type="pdf")
 
 if uploaded_file is not None:
-    with st.spinner("Extracting specific columns..."):
+    with st.spinner("Extracting scheduling columns..."):
         
         # --- THE EXTRACTION ENGINE ---
         full_text = ""
@@ -44,24 +44,30 @@ if uploaded_file is not None:
                     "program_name": "", 
                     "day": "", 
                     "wks": "", 
+                    "tot_qhr": "",
+                    "time": "",
                     "call_let": ""
                 }
                 
-            # Extract the specific 4 columns we want from the line
+            # Extract the specific 6 columns we want from the line
             for line in chunk.split('\n'):
                 if current_code in line:
-                    # Looks for: (Program Name) (Code) (Day) (Wks)
-                    m = re.search(rf'(.*?)\s*{current_code}\s+([A-Z]{{3}})\s+(\d+)', line)
+                    # Smart Search: Looks for Name, Code, Day, Wks, Tot Qhr, Start Time, and End Time
+                    pattern = rf'(.*?)\s*\*?\s*{current_code}\s+([A-Z]{{3}})\s+(\d+)\s+(\d+)\s+(\d{{1,2}}:\d{{2}}[A-Z]{{2}})\s*(?:-\s*)?(\d{{1,2}}:\d{{2}}[A-Z]{{2}})'
+                    m = re.search(pattern, line)
+                    
                     if m:
-                        p_name = m.group(1).strip()
-                        # Clean up asterisks if they exist in the original PDF
-                        p_name = p_name.replace('*', '').strip() 
+                        p_name = m.group(1).replace('*', '').strip()
                         
+                        # Save the name if we found one
                         if p_name and not program_data[current_code]["program_name"]:
                             program_data[current_code]["program_name"] = p_name
                         
+                        # Save all the scheduling details
                         program_data[current_code]["day"] = m.group(2)
                         program_data[current_code]["wks"] = m.group(3)
+                        program_data[current_code]["tot_qhr"] = m.group(4)
+                        program_data[current_code]["time"] = f"{m.group(5)} - {m.group(6)}"
                         
             if is_wiat or is_cbs:
                 station = "WIAT" if is_wiat else "CBS"
@@ -79,8 +85,8 @@ if uploaded_file is not None:
         if errors:
             st.error(f"❌ FAILED: Found {len(errors)} erroneous programs.")
             
-            # Create a standard Portrait PDF
-            pdf = FPDF(orientation='P', unit='mm', format='A4')
+            # Create a Landscape PDF to fit the extra columns
+            pdf = FPDF(orientation='L', unit='mm', format='A4')
             pdf.add_page()
             
             # Title
@@ -92,27 +98,32 @@ if uploaded_file is not None:
             pdf.set_font("Arial", 'B', 11)
             pdf.set_fill_color(200, 220, 255)
             
-            # Set column widths perfectly
+            # Set column widths perfectly for Landscape mode
             col_name = 85
-            col_day = 30
-            col_wks = 30
-            col_call = 40
+            col_day = 20
+            col_wks = 20
+            col_qhr = 25
+            col_time = 65
+            col_call = 35
             
             pdf.cell(col_name, 10, "Program Name", border=1, fill=True, align='C')
             pdf.cell(col_day, 10, "Day", border=1, fill=True, align='C')
             pdf.cell(col_wks, 10, "Wks", border=1, fill=True, align='C')
+            pdf.cell(col_qhr, 10, "Tot Qhr", border=1, fill=True, align='C')
+            pdf.cell(col_time, 10, "Telecast Time", border=1, fill=True, align='C')
             pdf.cell(col_call, 10, "Call Letter", border=1, fill=True, align='C')
             pdf.ln()
             
             # Table Rows
             pdf.set_font("Arial", '', 11)
             for err in errors:
-                # Fallback text if a name is completely blank in the PDF
                 name_text = err["program_name"] if err["program_name"] else "Unknown Program"
                 
                 pdf.cell(col_name, 10, name_text, border=1, align='C')
                 pdf.cell(col_day, 10, err["day"], border=1, align='C')
                 pdf.cell(col_wks, 10, err["wks"], border=1, align='C')
+                pdf.cell(col_qhr, 10, err["tot_qhr"], border=1, align='C')
+                pdf.cell(col_time, 10, err["time"], border=1, align='C')
                 pdf.cell(col_call, 10, err["call_let"], border=1, align='C')
                 pdf.ln()
                 
